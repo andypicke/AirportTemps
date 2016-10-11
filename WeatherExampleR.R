@@ -57,25 +57,30 @@ rm_bad_wea_values <- function(dat){
 
 # Define a function to load and combine all years for a station into one dataframe
 combine_years_wea <- function(st_code){
-        print(paste("combining years for station ", st_code))
-        # Load csv files for each year and combine into a single data frame
-        year_list=1980:2015
-        # for KDEN, 1994 and 1995 have missing/bad data. need to deal with this
-        #        year_list=c(1980:1993,1996:2015)
-        dat_all=data.frame()
-        for (i in seq_along(year_list)) {
-                year <- year_list[i]
-                #print(year)
-                dat <- read.csv( file.path( "~/AirportTemps/Data",paste0("wea",st_code,year,".csv")))
-                dat<-rm_bad_wea_values(dat)
-                dat$dd <- ymd(dat[,1])
-                #                print(head(dat))
-                dat_all=rbind(dat_all,dat)
-                #print(dim(dat_all))
+        savefile <-file.path( "~/AirportTemps/Data",paste0("wea",st_code,"combined.csv"))
+        if (file.exists(savefile)){
+                print(paste(savefile," already combined"))
+        }else{
+                print(paste("combining years for station ", st_code))
+                # Load csv files for each year and combine into a single data frame
+                year_list=1980:2015
+                # for KDEN, 1994 and 1995 have missing/bad data. need to deal with this
+                #        year_list=c(1980:1993,1996:2015)
+                dat_all=data.frame()
+                for (i in seq_along(year_list)) {
+                        year <- year_list[i]
+                        #print(year)
+                        dat <- read.csv( file.path( "~/AirportTemps/Data",paste0("wea",st_code,year,".csv")))
+                        dat<-rm_bad_wea_values(dat)
+                        dat$dd <- ymd(dat[,1])
+                        #                print(head(dat))
+                        dat_all=rbind(dat_all,dat)
+                        #print(dim(dat_all))
+                }
+                # Save csv with combined data...
+                write.csv(dat_all,savefile)
+                # dat_all
         }
-        # Save csv with combined data...
-        write.csv(dat_all,file.path( "~/AirportTemps/Data",paste0("wea",st_code,"combined.csv")))
-        # dat_all
 }
 
 # some stations don't work, so need tryapply()
@@ -83,10 +88,33 @@ tryapply(st_list, combine_years_wea)
 
 # Define a function to load a specified station and do fit
 
-fit_station <- function(st_code)
+#fit_station <- function(st_code)
 
 # save data frame with fit coeffs, p value etc.
+temp_fits<-data.frame()
+for (i in seq_along(st_list)) {
+        fname<-file.path( "~/AirportTemps/Data",paste0("wea",st_list[i],"combined.csv"))
+        if (file.exists(fname)){
+                print(paste("Fitting to ",st_list[i]))
+                dat<- read.csv(fname)
+                dat$dd <- ymd(dat$dd)
+                fit1 <- lm(Mean.TemperatureF~dd,data=dat)
+                summary(fit1)
+                temp_fits<-rbind(temp_fits,data.frame(airportCode=st_list[i],trend=fit1$coefficients[2],pval=summary(fit1)$coefficients[2,4]))
+        }
+}
 
+
+
+# function to load combined 1980-2016 csv file for specified station
+load_combined<-function(st_code){
+        fname<-file.path( "~/AirportTemps/Data",paste0("wea",st_code,"combined.csv"))
+        dat<- read.csv(fname)
+        dat$dd <- ymd(dat$dd)
+        dat
+}
+
+# save a vector of coeffs
 all_coefs <- NA*vector(length(st_list),mode="numeric")
 for (i in seq_along(st_list)) {
         fname<-file.path( "~/AirportTemps/Data",paste0("wea",st_list[i],"combined.csv"))
@@ -102,6 +130,45 @@ for (i in seq_along(st_list)) {
                 }
         }
 }
+
+# convert trend to deg/decade
+temp_fits$trend <- temp_fits$trend*365*10
+View(temp_fits)
+
+# How many fits have significant/non sig. pvalues?
+ig<-which(temp_fits$pval<0.025)
+ib<-which(temp_fits$pval>0.025)
+length(ig)
+length(ib)
+
+# Look at some of the stations where pvalue was large or small
+id<-ib[18]
+id<-ig[300]
+print(temp_fits$airportCode[id])
+d3 <- load_combined(temp_fits$airportCode[id])
+g<-ggplot(d3,aes(x=dd,y=Max.TemperatureF))
+g+geom_line()+geom_smooth(method="lm")
+
+hist(temp_fits$trend[ib])
+hist(temp_fits$trend[ig])
+
+# look at big outliers
+idb<-which(temp_fits$trend>10)
+View(temp_fits[idb,])
+
+id<-idb[10]
+#g<-my_plot(id)
+#my_plot<-function(id){
+print(temp_fits$airportCode[id])
+print(temp_fits$trend[id])
+d3 <- load_combined(temp_fits$airportCode[id])
+g<-ggplot(d3,aes(x=dd,y=Max.TemperatureF))+geom_line()+geom_smooth(method="lm")
+g
+#}
+
+#abline(lm(Mean.TemperatureF~dd,data=d3))
+fit1 <- lm(Mean.TemperatureF~dd,data=d3)
+summary(fit1)
 
 # Need to make a data frame w/ coefs and station info (lat,lon etc) for plotting
 results <- data.frame(airportCode=st_list,trend=all_coefs)
