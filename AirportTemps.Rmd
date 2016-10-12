@@ -12,10 +12,12 @@ keep_md: yes
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-
+I love looking at weather data and have experimented in the past with some of the airport weather station data available from <www.wunderground.com>. I saw this little analysis on R-bloggers 
 <https://www.r-bloggers.com/annual-mean-temperature-trends-12-airports/>
+and thought it would be interesting to look at trends from stations across the US and visualize the results on a map.
 
 ```{r Setup}
+# Setup, load packages
 rm(list=ls())
 library(weatherData)
 suppressPackageStartupMessages(library(lubridate))
@@ -27,17 +29,21 @@ library(magrittr)
 library(leaflet)
 ```
 
-Now we need a list of the weather stations we will use. Luckily the weatherData package already contains a data frame 'USAirportWeatherStations' with all the stations and info about them.
+First we need a list of the weather stations we will use. Luckily the weatherData package already contains a compiled data frame 'USAirportWeatherStations' with all the stations and info about them. The 'airportCode' field is what will identify the station when we request the data through the wunderground API.
 ```{r}
 head(USAirportWeatherStations)
+```
+
+I want to fit a long-term trend, so i'll get data starting in 1980 (a lot of the stations seem to go back this far).
+```{r}
 # Years we will get data for
 year_list=1980:2016
-# station KMMO 1993 not working?
 st_list <-USAirportWeatherStations$airportCode
+# station KMMO 1993 doesn't work, skip
 st_list <- st_list[-which(st_list=="KMMO")]
 ```
 
-Let's first plot all the station locations. For now, I'll just use those in the continental/lower 48 US states. Including others like Alaska, Hawaii, Virgin Islands etc. makes the map very large and difficult to see.
+Let's first plot all the station locations. For this analysis, I'll just use those in the continental/lower 48 US states. Including others like Alaska, Hawaii, Virgin Islands etc. makes the map very large and difficult to see. The leaflet pacakge makes a nice interactive map (try zooming and clicking on locations!).
 ```{r Plot Locations}
 # just plot all station locations
 cont_us=subset(USAirportWeatherStations,State!="AK" & State!="MP" & State!="PR" & State!="HI" & State!="VI" & State!="GU")
@@ -45,20 +51,21 @@ cont_us=subset(USAirportWeatherStations,State!="AK" & State!="MP" & State!="PR" 
 m <- leaflet() %>%
         setMaxBounds(-125,23,-67,50)%>%
         addTiles() %>%  # Add default OpenStreetMap map tiles
-        addCircleMarkers(lng=cont_us$Lon,lat=cont_us$Lat,popup=cont_us$Station,radius=2,fill=TRUE,color="grey")#,clusterOptions = markerClusterOptions())
-#addCircles(lng=cont_us$Lon,lat=cont_us$Lat)
+        addCircleMarkers(lng=cont_us$Lon,lat=cont_us$Lat,popup=cont_us$Station,radius=2,fill=TRUE,color="grey")
 m  # Print the map
 
 ```
 
 The next bit of code downloads the data from <http://www.wunderground.com>. This is the most time-consuming part of the analysis. It appears that the wunderground API only lets you download a year of data at a time. With my laptop and wifi speed, I estimate it takes about 2-3 sec to download each 1 year data file. For 36 years of data (1980-2016) at about 1600 stations, that works out to about 48 hours! Luckily it is easy to write a loop to do this, and I just let it run overnight or in the background until it was done.
 ```{r Download Data, eval=FALSE}
-# Define function to download daily weather for 1 year
+# Define function to download daily weather for 1 year.
+# I had trouble getting the functions in the weatherData package to work, but once we have the formula for the API it is easy to grab the data.
+
 get_yearly_weather <- function (year,st_code){
         url <- paste0("http://www.wunderground.com/history/airport/",st_code,"/",year,"/1/1/CustomHistory.html?dayend=31&monthend=12&yearend=",year,"&req_city=NA&req_state=NA&req_statename=NA&format=1")
 }
 
-# Define a function to download the weather data for a given station code
+# Define a function to download the weather data for a given station code for each year
 get_all_years <- function(st_code){
         for (i in seq_along(year_list)) {
                 year <- year_list[i]
@@ -79,7 +86,8 @@ tryapply(st_list, get_all_years)
 ```
 
 
-Ok, we finally have all the yearly data files downloaded. 
+Ok, we finally have all the yearly data files downloaded. Now i'll combine the yearly files (1980-2016) for each station into a single combined file. I also do some cleaning and remove bad temperature values.
+
 ```{r Combine Years, eval=FALSE}
 # Remove bad temperature values (marked as -99999 in data)
 rm_bad_wea_values <- function(dat){
@@ -125,8 +133,8 @@ combine_years_wea <- function(st_code){
 tryapply(st_list, combine_years_wea)
 ```
 
+Ok, we now have a single file for each station with all the data. I loop through and fit a linear trend vs time for each one, and store all the results in a dataframe. I'll save the trend (coefficent) from the fit, and the p-values to evaluate how reliable the fit was.
 ```{r Fits, eval=FALSE}
-# Define a function to load a specified station and do fit
 
 # save data frame with fit coeffs, p value etc.
 temp_fits<-data.frame()
@@ -149,6 +157,7 @@ write.csv(temp_fits,file.path( "~/AirportTemps/Data","temp_fits.csv"))
 ```
 
 
+Let's look at the results. First i'll define a little function to simplify loading the data.
 ```{r}
 # function to load combined 1980-2016 csv file for specified station
 load_combined<-function(st_code){
@@ -159,68 +168,72 @@ load_combined<-function(st_code){
 }
 ```
 
-```{r}
 
+```{r}
 temp_fits <- read.csv(file.path( "~/AirportTemps/Data","temp_fits.csv"))
 
 # convert trend to deg/decade
 temp_fits$trend <- temp_fits$trend*365*10
+```
 
+How many fits have significant/non sig. p-values?
+```{r}
+ig<-which(temp_fits$pval<0.05)
+ib<-which(temp_fits$pval>0.05)
+print(paste(length(ig)," fits have p-values that are significant(<0.05)"))
+print(paste(length(ib)," fits have p-values that are not significant(>0.05)"))
+```
 
-# How many fits have significant/non sig. pvalues?
-ig<-which(temp_fits$pval<0.025)
-ib<-which(temp_fits$pval>0.025)
-length(ig)
-length(ib)
+Look at the distribution of trends.
+```{r}
+boxplot(temp_fits$trend[ig],main="Temperature trends",ylab= "deg/decade")
+```
 
-max(temp_fits$trend[ig])
-max(temp_fits$trend[ib])
+Most of the trends seem reasonable (magnitudes of about 2 degrees per decade), but there a few outliers. Lets look at those and see what's going on.
 
-par(mfrow=c(1,3))
-hist(temp_fits$trend,xlim=c(-5,5),breaks=10)
-hist(temp_fits$trend[ib],xlim=c(-5,5),breaks=10)
-hist(temp_fits$trend[ig],xlim=c(-5,5),breaks=10)
+```{r}
+iout <- which(abs(temp_fits$trend)>5)
+temp_fits[iout,]
+datout <- load_combined(temp_fits$airportCode[iout])
+g<-ggplot(datout,aes(x=dd,y=Mean.TemperatureF))+geom_line()+geom_smooth(method="lm")
+g
+```
 
-# look at big outliers
-# looks like in the stations with absurdly huge trends, they have a couple of very small values
+It's obvious from the plot that something is wrong with the data for this station; there is a huge offset between the first ~5 years. Maybe the station was moved, or mislabeled? We'll remove this station (note it is in Alaska, so I wouldn't have plotted it in the end anyways).
 
-#max(temp_fits$trend)
-#idb<-which(temp_fits$trend>6)
-#View(temp_fits[idb,])
+```{r}
+temp_fits <- temp_fits[-iout,]
+```
 
-#id<-idb[1]
-#print(temp_fits$airportCode[id])
-#print(temp_fits$trend[id])
-#d3 <- load_combined(temp_fits$airportCode[id])
-#min(d3$Mean.TemperatureF,na.rm = TRUE)
-#d3<-subset(d3,Mean.TemperatureF>-100)
-#g<-ggplot(d3,aes(x=dd,y=Mean.TemperatureF))+geom_line()+geom_smooth(method="lm")
-#g
-#}
+Let's look at a good fit also, to convince ourselves we are doing this right:
 
-# look at details of fit
-#fit1 <- lm(Mean.TemperatureF~dd,data=d3)
-#summary(fit1)
+```{r}
+id <- ig[550]
+temp_fits[id,]
+datgood <- load_combined(temp_fits$airportCode[id])
+g<-ggplot(datgood,aes(x=dd,y=Mean.TemperatureF))+geom_line()+geom_smooth(method="lm")
+g
+```
 
+Ok this looks better. Note I haven't removed any of the obvious seasonal cycle. My reasoning is that i'm interested in the long-term trend, and if there is a constant seasonal cycle it should average itself out (ie if the only variability in temperature was a seasonal cycle, the fit should give a trend of zero). In the future I plan to try fits over different time periods, and also with the seasonal cycle removed, to see how that affects the results.
+
+Ok, now it's time to make the awesome map i've been envisioning. First i'll join the fit results with the station info so we have the locations and data together.
+```{r}
 # Join to data frame with station info
-results2 <- join(temp_fits,USAirportWeatherStations,by="airportCode")
-
-# Convert from deg/day to deg/decade
-#results2$trend <- results2$trend*365*10
+results2 <- join(temp_fits[ig,],USAirportWeatherStations,by="airportCode")
 
 # Keep only continental and lower 48 states (map doesn't look good with others)
 results2<-subset(results2,State!="AK" & State!="MP" & State!="PR" & State!="HI" )
 
+# Take a look at the largest, smallest trends
 sortdat<-arrange(results2,desc(trend))
 head(sortdat)
 tail(sortdat)
-
 ```
 
-## Plot map with circles proportional to trend
+Now I can plot the map, with the size and color of circles proportional to the trends. Red colors indicate positive (warming) trends, and blue colors indicate negative (cooling) trends.
 
 ```{r Plot Map}
-
 ## Plot map with circles proportional to trend
 usa <- map_data("usa")
 states <- map_data("state")
@@ -231,4 +244,30 @@ g2<-g+geom_polygon(data=states,aes(x = long, y = lat, group = group), fill="slat
 
 g2 + geom_point(data = results2, aes(x = Lon, y = Lat,size = abs(trend),color=trend)) + scale_color_gradient2(midpoint=0, low="blue", mid="white",high="red", space ="Lab" ,limits=c(-3,3)) +ggtitle("Linear trend [deg/decade] in mean temp., 1980-2016") + labs(x="Longitude",y="Latitude")
 
+# now try making same map w/ leaflet
+library(leaflet)
+
+# make color palette. I want to use the diverging red-blue palette, but need to reverse it so blue is negative, red is positive
+pal_blrd <- brewer.pal(10,"RdBu")
+pal <- colorNumeric(palette=rev(pal_blrd),domain=c(-3,3))
+
+m <- leaflet(data=results2) %>%
+        setMaxBounds(-125,23,-67,50)%>%
+        addTiles() %>%  # Add default OpenStreetMap map tiles
+        addCircleMarkers(~Lon,~Lat,popup=paste(results2$Station,round(results2$trend,digits=2)),radius=~(4*trend),fill=TRUE,color=~pal(trend),fillColor=~pal(trend),fillOpacity = 2,opacity=2,weight=3)
+m  # Print the map
+
 ```
+
+### Conclusions
+The map suggests the following conclusions, though more detailed analysis is needed to confirm them.
+
+- The majority of the stations show a warming trend
+- Some stations show a cooling trend. 
+- Qualitatively from the map, it looks like the south/south east is warming at almost all stations.
+
+### Future questions
+- Is the trend related to latitude?
+- Are the fits sensitive to the exact time-range used?
+- What does Alasksa look like?
+

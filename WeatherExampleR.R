@@ -11,7 +11,7 @@ library(maps)
 library(RColorBrewer)
 
 # Years we will get data for
-year_list=1980:2016
+year_list=1980:2015
 
 # list of station codes to get data for
 #st_list<-c("KPHX","KLAX","KDEN","KMIA","KBOI","KIND",'KDFW',"KMSY","KBOS")
@@ -111,6 +111,8 @@ for (i in seq_along(st_list)) {
 # save a csv file with the fit results
 write.csv(temp_fits,file.path( "~/AirportTemps/Data","temp_fits.csv"))
 
+###
+temp_fits <- read.csv(file.path( "~/AirportTemps/Data","temp_fits.csv"))
 
 # function to load combined 1980-2016 csv file for specified station
 load_combined<-function(st_code){
@@ -194,7 +196,7 @@ results2 <- join(temp_fits,USAirportWeatherStations,by="airportCode")
 #results2$trend <- results2$trend*365*10
 
 # Keep only continental and lower 48 states (map doesn't look good with others)
-results2<-subset(results2,State!="AK" & State!="MP" & State!="PR" & State!="HI" & abs(trend)<10)
+results2<-subset(results2,State!="AK" & State!="MP" & State!="PR" & State!="HI" )
 
 
 ## Plot map with circles proportional to trend
@@ -206,6 +208,21 @@ g<-ggplot() + geom_polygon(data = usa, aes(x=long, y = lat, group = group), fill
 g2<-g+geom_polygon(data=states,aes(x = long, y = lat, group = group), fill="slategray",color = "white") + guides(fill=FALSE)  # do this to leave off the color legend
 
 g2 + geom_point(data = results2, aes(x = Lon, y = Lat,size = abs(trend),color=trend)) + scale_color_gradient2(midpoint=0, low="blue", mid="white",high="red", space ="Lab" ,limits=c(-3,3)) +ggtitle("Linear trend [deg/decade] in mean temp., 1980-2016") + labs(x="Longitude",y="Latitude")
+
+
+# now try making same map w/ leaflet
+library(leaflet)
+
+# make color palette. I want to use the diverging red-blue palette, but need to reverse it so blue is negative, red is positive
+pal_blrd <- brewer.pal(10,"RdBu")
+pal <- colorNumeric(palette=rev(pal_blrd),domain=c(-3,3))
+
+m <- leaflet(data=results2) %>%
+        setMaxBounds(-125,23,-67,50)%>%
+        addTiles() %>%  # Add default OpenStreetMap map tiles
+        addCircleMarkers(~Lon,~Lat,popup=paste(results2$Station,round(results2$trend,digits=2)),radius=~trend,fill=TRUE,color=~pal(trend),fillOpacity = 1)
+m  # Print the map
+
 
 # same size
 g2 + geom_point(data = results2, aes(x = Lon, y = Lat,color=trend)) + scale_color_gradient2(midpoint=0, low="blue", mid="white",high="red", space ="Lab" ,limits=c(-3,3)) +ggtitle("Linear trend [deg/decade] in mean temp., 1980-2016") + labs(x="Longitude",y="Latitude")
