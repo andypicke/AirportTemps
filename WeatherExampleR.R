@@ -52,20 +52,20 @@ rm_bad_wea_values <- function(dat){
         dat$Min.TemperatureF[which(dat$Min.TemperatureF==-99999)]<-NA
         dat$Max.TemperatureF[which(dat$Max.TemperatureF==-99999)]<-NA
         dat$Mean.TemperatureF[which(dat$Mean.TemperatureF==-99999)]<-NA
+        dat<-subset(dat,Mean.TemperatureF>-50);
+        dat<-subset(dat,Mean.TemperatureF<150);
         dat
 }
 
 # Define a function to load and combine all years for a station into one dataframe
 combine_years_wea <- function(st_code){
         savefile <-file.path( "~/AirportTemps/Data",paste0("wea",st_code,"combined.csv"))
-        if (file.exists(savefile)){
-                print(paste(savefile," already combined"))
-        }else{
+#        if (file.exists(savefile)){
+#                print(paste(savefile," already combined"))
+#        }else{
                 print(paste("combining years for station ", st_code))
                 # Load csv files for each year and combine into a single data frame
                 year_list=1980:2015
-                # for KDEN, 1994 and 1995 have missing/bad data. need to deal with this
-                #        year_list=c(1980:1993,1996:2015)
                 dat_all=data.frame()
                 for (i in seq_along(year_list)) {
                         year <- year_list[i]
@@ -80,7 +80,7 @@ combine_years_wea <- function(st_code){
                 # Save csv with combined data...
                 write.csv(dat_all,savefile)
                 # dat_all
-        }
+#        }
 }
 
 # some stations don't work, so need tryapply()
@@ -98,9 +98,9 @@ for (i in seq_along(st_list)) {
                 print(paste("Fitting to ",st_list[i]))
                 dat<- read.csv(fname)
                 dat$dd <- ymd(dat$dd)
-                fit1 <- lm(Mean.TemperatureF~dd,data=dat)
+                try(fit1 <- lm(Mean.TemperatureF~dd,data=dat)
                 summary(fit1)
-                temp_fits<-rbind(temp_fits,data.frame(airportCode=st_list[i],trend=fit1$coefficients[2],pval=summary(fit1)$coefficients[2,4]))
+                temp_fits<-rbind(temp_fits,data.frame(airportCode=st_list[i],trend=fit1$coefficients[2],pval=summary(fit1)$coefficients[2,4])))
         }
 }
 
@@ -115,21 +115,21 @@ load_combined<-function(st_code){
 }
 
 # save a vector of coeffs
-all_coefs <- NA*vector(length(st_list),mode="numeric")
-for (i in seq_along(st_list)) {
-        fname<-file.path( "~/AirportTemps/Data",paste0("wea",st_list[i],"combined.csv"))
-        if (file.exists(fname)){
-                print(paste("Fitting to ",st_list[i]))
-                dat<- read.csv(fname)
-                dat$dd <- ymd(dat$dd)
-                fit1 <- lm(Mean.TemperatureF~dd,data=dat)
-                summary(fit1)
-                # Only save is p-value is small enough
-                if (summary(fit1)$coefficients[2,4]<0.025){
-                        all_coefs[i]<-fit1$coefficients[2]
-                }
-        }
-}
+#all_coefs <- NA*vector(length(st_list),mode="numeric")
+#for (i in seq_along(st_list)) {
+#        fname<-file.path( "~/AirportTemps/Data",paste0("wea",st_list[i],"combined.csv"))
+#        if (file.exists(fname)){
+#                print(paste("Fitting to ",st_list[i]))
+#                dat<- read.csv(fname)
+#                dat$dd <- ymd(dat$dd)
+#                fit1 <- lm(Mean.TemperatureF~dd,data=dat)
+#                summary(fit1)
+#                # Only save is p-value is small enough
+#                if (summary(fit1)$coefficients[2,4]<0.025){
+#                        all_coefs[i]<-fit1$coefficients[2]
+#                }
+#        }
+#}
 
 # convert trend to deg/decade
 temp_fits$trend <- temp_fits$trend*365*10
@@ -140,6 +140,9 @@ ig<-which(temp_fits$pval<0.025)
 ib<-which(temp_fits$pval>0.025)
 length(ig)
 length(ib)
+
+max(temp_fits$trend[ig])
+max(temp_fits$trend[ib])
 
 # Look at some of the stations where pvalue was large or small
 id<-ib[18]
@@ -153,20 +156,23 @@ hist(temp_fits$trend[ib])
 hist(temp_fits$trend[ig])
 
 # look at big outliers
-idb<-which(temp_fits$trend>10)
+# looks like in the stations with absurdly huge trends, they have a couple of very small values
+
+max(temp_fits$trend)
+idb<-which(temp_fits$trend>6)
 View(temp_fits[idb,])
 
-id<-idb[10]
-#g<-my_plot(id)
-#my_plot<-function(id){
+id<-idb[1]
 print(temp_fits$airportCode[id])
 print(temp_fits$trend[id])
 d3 <- load_combined(temp_fits$airportCode[id])
-g<-ggplot(d3,aes(x=dd,y=Max.TemperatureF))+geom_line()+geom_smooth(method="lm")
+min(d3$Mean.TemperatureF,na.rm = TRUE)
+d3<-subset(d3,Mean.TemperatureF>-100)
+g<-ggplot(d3,aes(x=dd,y=Mean.TemperatureF))+geom_line()+geom_smooth(method="lm")
 g
 #}
 
-#abline(lm(Mean.TemperatureF~dd,data=d3))
+# look at details of fit
 fit1 <- lm(Mean.TemperatureF~dd,data=d3)
 summary(fit1)
 
@@ -174,13 +180,15 @@ summary(fit1)
 results <- data.frame(airportCode=st_list,trend=all_coefs)
 
 # Join to data frame with station info
-results2 <- join(results,USAirportWeatherStations,by="airportCode")
+#results2 <- join(results,USAirportWeatherStations,by="airportCode")
+
+results2 <- join(temp_fits,USAirportWeatherStations,by="airportCode")
 
 # Convert from deg/day to deg/decade
-results2$trend <- results2$trend*365*10
+#results2$trend <- results2$trend*365*10
 
 # Keep only continental and lower 48 states (map doesn't look good with others)
-results2<-subset(results2,State!="AK" & State!="MP" & State!="PR" & State!="HI" & abs(trend)<3)
+results2<-subset(results2,State!="AK" & State!="MP" & State!="PR" & State!="HI" & abs(trend)<10)
 
 
 ## Plot map with circles proportional to trend
@@ -196,47 +204,15 @@ g2 + geom_point(data = results2, aes(x = Lon, y = Lat,size = abs(trend),color=tr
 # same size
 g2 + geom_point(data = results2, aes(x = Lon, y = Lat,color=trend)) + scale_color_gradient2(midpoint=0, low="blue", mid="white",high="red", space ="Lab" ,limits=c(-3,3)) +ggtitle("Linear trend [deg/decade] in mean temp., 1980-2016") + labs(x="Longitude",y="Latitude")
 
-#limits=c(-10,10)
+# should plot all stations, make the oens where fits not signficant a different color/marker
+
+# just plot all station locations
+usa <- map_data("usa")
+states <- map_data("state")
+
+g<-ggplot() + geom_polygon(data = usa, aes(x=long, y = lat, group = group), fill=NA, color="red") + coord_fixed(1.3) 
+g2<-g+geom_polygon(data=states,aes(x = long, y = lat, group = group), fill="slategray",color = "white") + guides(fill=FALSE)  # do this to leave off the color legend
+all_cont=subset(USAirportWeatherStations,State!="AK" & State!="MP" & State!="PR" & State!="HI" & State!="VI" & State!="GU")
+g2+geom_point(data=all_cont,aes(x=Lon,y=Lat),color="red",size=0.5)
+
 ####
-
-
-
-# convert timestamp from factor to date format (note they come in different timezones for #different stations, eventually fix that)
-#dat_all$dd <- ymd(dat_all[,1])
-
-dat_all<-dat
-# Plot Timeseries of temperature
-g <- ggplot(data=dat_all,aes(x=dat_all$dd,y=dat_all$Max.TemperatureF))
-g <- ggplot(data=dat_all,aes(x=dat_all$dd,y=dat_all$Min.TemperatureF))
-g <- ggplot(data=dat_all,aes(x=dat_all$dd,y=dat_all$Mean.TemperatureF))
-g+geom_line()+geom_smooth(method="lm",se=TRUE)
-
-
-dat_all$dev <- dat_all$Max.TemperatureF - mean(dat_all$Max.TemperatureF)
-g<-ggplot(dat_all,aes(x=dat_all$dd,y=dat_all$dev))
-g+geom_line()+geom_smooth(method = "lm")
-###
-
-# Plot Alaska separately
-
-# Make list of top 10 stations
-
-
-## Save lm coefficients (use broom?)
-
-## Compare fits over different time ranges?
-
-
-# Conclusions
-
-st_code="KAKQ"
-fname<-file.path( "~/AirportTemps/Data",paste0("wea",st_code,"combined.csv"))
-#if (file.exists(fname)){
-#        print(paste("Fitting to ",st_list[i]))
-        dat<- read.csv(fname)
-        dat$dd <- ymd(dat$dd)
-        fit1 <- lm(Mean.TemperatureF~dd,data=dat)
-        summary(fit1)
-        # Need to check if fit is significant
-        all_coefs[i]<-fit1$coefficients[2]
-        
