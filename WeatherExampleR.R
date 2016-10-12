@@ -77,8 +77,13 @@ combine_years_wea <- function(st_code){
                         dat_all=rbind(dat_all,dat)
                         #print(dim(dat_all))
                 }
+                # Check to make sure we have data (some files are empty)
+                if (nrow(dat_all)>(20*365)){
                 # Save csv with combined data...
                 write.csv(dat_all,savefile)
+                }else{
+                        print(paste("station ",st_code," doesn't have enough data"))
+                }
                 # dat_all
 #        }
 }
@@ -86,9 +91,6 @@ combine_years_wea <- function(st_code){
 # some stations don't work, so need tryapply()
 tryapply(st_list, combine_years_wea)
 
-# Define a function to load a specified station and do fit
-
-#fit_station <- function(st_code)
 
 # save data frame with fit coeffs, p value etc.
 temp_fits<-data.frame()
@@ -98,12 +100,16 @@ for (i in seq_along(st_list)) {
                 print(paste("Fitting to ",st_list[i]))
                 dat<- read.csv(fname)
                 dat$dd <- ymd(dat$dd)
-                try(fit1 <- lm(Mean.TemperatureF~dd,data=dat)
+                fit1 <- lm(Mean.TemperatureF~dd,data=dat)
                 summary(fit1)
-                temp_fits<-rbind(temp_fits,data.frame(airportCode=st_list[i],trend=fit1$coefficients[2],pval=summary(fit1)$coefficients[2,4])))
+                temp_fits<-rbind(temp_fits,data.frame(airportCode=st_list[i],trend=fit1$coefficients[2],pval=summary(fit1)$coefficients[2,4]))
+        }else{
+                print(paste("combined file for station ", st_list[i], " doesn't exist, skipping"))
         }
 }
 
+# save a csv file with the fit results
+write.csv(temp_fits,file.path( "~/AirportTemps/Data","temp_fits.csv"))
 
 
 # function to load combined 1980-2016 csv file for specified station
@@ -137,7 +143,7 @@ View(temp_fits)
 
 # How many fits have significant/non sig. pvalues?
 ig<-which(temp_fits$pval<0.025)
-ib<-which(temp_fits$pval>0.025)
+ib<-which(temp_fits$pval>=0.025)
 length(ig)
 length(ib)
 
@@ -177,7 +183,7 @@ fit1 <- lm(Mean.TemperatureF~dd,data=d3)
 summary(fit1)
 
 # Need to make a data frame w/ coefs and station info (lat,lon etc) for plotting
-results <- data.frame(airportCode=st_list,trend=all_coefs)
+#results <- data.frame(airportCode=st_list,trend=all_coefs)
 
 # Join to data frame with station info
 #results2 <- join(results,USAirportWeatherStations,by="airportCode")
