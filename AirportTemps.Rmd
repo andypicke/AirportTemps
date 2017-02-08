@@ -1,10 +1,9 @@
 ---
 title: "Analysis of Linear Trends in USA Aiport Temperatures"
 author: "Andy Pickering"
-date: "10/8/2016"
+date: "10/12/2016"
 output: 
-  html_document: 
-    keep_md: yes
+html_document: 
 keep_md: yes
 ---
 
@@ -12,7 +11,7 @@ keep_md: yes
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-I love looking at weather data and have experimented in the past with some of the airport weather station data available from <www.wunderground.com>. I saw this little analysis on R-bloggers 
+I love looking at weather data and have experimented in the past with some of the airport weather station data available from <http://www.wunderground.com>. I saw this little analysis on R-bloggers 
 <https://www.r-bloggers.com/annual-mean-temperature-trends-12-airports/>
 and thought it would be interesting to look at trends from stations across the US and visualize the results on a map.
 
@@ -86,7 +85,7 @@ tryapply(st_list, get_all_years)
 ```
 
 
-Ok, we finally have all the yearly data files downloaded. Now i'll combine the yearly files (1980-2016) for each station into a single combined file. I also do some cleaning and remove bad temperature values.
+Ok, we finally have all the yearly data files downloaded. Now i'll combine the yearly files (1980-2015) for each station into a single combined file. I also do some cleaning and remove bad temperature values.
 
 ```{r Combine Years, eval=FALSE}
 # Remove bad temperature values (marked as -99999 in data)
@@ -102,9 +101,6 @@ rm_bad_wea_values <- function(dat){
 # Define a function to load and combine all years for a station into one dataframe
 combine_years_wea <- function(st_code){
         savefile <-file.path( "~/AirportTemps/Data",paste0("wea",st_code,"combined.csv"))
-        #        if (file.exists(savefile)){
-        #                print(paste(savefile," already combined"))
-        #        }else{
         print(paste("combining years for station ", st_code))
         # Load csv files for each year and combine into a single data frame
         year_list=1980:2015
@@ -115,9 +111,7 @@ combine_years_wea <- function(st_code){
                 dat <- read.csv( file.path( "~/AirportTemps/Data",paste0("wea",st_code,year,".csv")))
                 dat<-rm_bad_wea_values(dat)
                 dat$dd <- ymd(dat[,1])
-                #                print(head(dat))
                 dat_all=rbind(dat_all,dat)
-                #print(dim(dat_all))
         }
         # Check to make sure we have data (some files are empty)
         if (nrow(dat_all)>(20*365)){
@@ -126,7 +120,6 @@ combine_years_wea <- function(st_code){
         }else{
                 print(paste("station ",st_code," doesn't have data"))
         }
-        #        }
 }
 
 # some stations don't work, so need tryapply()
@@ -199,7 +192,7 @@ g<-ggplot(datout,aes(x=dd,y=Mean.TemperatureF))+geom_line()+geom_smooth(method="
 g
 ```
 
-It's obvious from the plot that something is wrong with the data for this station; there is a huge offset between the first ~5 years. Maybe the station was moved, or mislabeled? We'll remove this station (note it is in Alaska, so I wouldn't have plotted it in the end anyways).
+It's obvious from the plot that something is wrong with the data for this station; there is a huge offset after the first ~5 years. Maybe the station was moved, or mislabeled? We'll remove this station (note it is in Alaska, so I wouldn't have plotted it in the end anyways).
 
 ```{r}
 temp_fits <- temp_fits[-iout,]
@@ -242,14 +235,14 @@ g<-ggplot() + geom_polygon(data = usa, aes(x=long, y = lat, group = group), fill
 
 g2<-g+geom_polygon(data=states,aes(x = long, y = lat, group = group), fill="slategray",color = "white") + guides(fill=FALSE)  # do this to leave off the color legend
 
-g2 + geom_point(data = results2, aes(x = Lon, y = Lat,size = abs(trend),color=trend)) + scale_color_gradient2(midpoint=0, low="blue", mid="white",high="red", space ="Lab" ,limits=c(-3,3)) +ggtitle("Linear trend [deg/decade] in mean temp., 1980-2016") + labs(x="Longitude",y="Latitude")
+g2 + geom_point(data = results2, aes(x = Lon, y = Lat,size = abs(trend),color=trend)) + scale_color_gradient2(midpoint=0, low="blue", mid="white",high="red", space ="Lab" ,limits=c(-3.5,3.5)) +ggtitle("Linear trend [deg/decade] in mean temp., 1980-2016") + labs(x="Longitude",y="Latitude")
 
 # now try making same map w/ leaflet
 library(leaflet)
 
 # make color palette. I want to use the diverging red-blue palette, but need to reverse it so blue is negative, red is positive
 pal_blrd <- brewer.pal(10,"RdBu")
-pal <- colorNumeric(palette=rev(pal_blrd),domain=c(-3,3))
+pal <- colorNumeric(palette=rev(pal_blrd),domain=c(-3.5,3.5))
 
 m <- leaflet(data=results2) %>%
         setMaxBounds(-125,23,-67,50)%>%
