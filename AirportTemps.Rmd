@@ -200,6 +200,12 @@ It's obvious from the plot that something is wrong with the data for this statio
 temp_fits <- temp_fits[-iout,]
 ```
 
+
+Look at the distribution of trends again with the big outlier removed:
+```{r}
+boxplot(temp_fits$trend[ig],main="Temperature trends",ylab= "deg/decade")
+```
+
 Let's look at a good fit also, to convince ourselves we are doing this right:
 
 ```{r}
