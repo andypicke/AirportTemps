@@ -254,7 +254,10 @@ ggplot() +
         ggtitle("Linear trend [deg/decade] in mean temp., 1980-2016") +
         labs(x="Longitude",y="Latitude")
 
-# now try making same map w/ leaflet
+```
+
+```{r}
+# Make the same map w/ leaflet
 library(leaflet)
 
 # make color palette. I want to use the diverging red-blue palette, but need to reverse it so blue is negative, red is positive
