@@ -21,7 +21,7 @@ rm(list=ls())
 library(weatherData)
 suppressPackageStartupMessages(library(lubridate))
 library(ggplot2)
-suppressPackageStartupMessages(library(plyr))
+suppressPackageStartupMessages(library(dplyr))
 suppressPackageStartupMessages(library(maps))
 library(RColorBrewer)
 library(magrittr)
@@ -45,7 +45,8 @@ st_list <- st_list[-which(st_list=="KMMO")]
 Let's first plot all the station locations. For this analysis, I'll just use those in the continental/lower 48 US states. Including others like Alaska, Hawaii, Virgin Islands etc. makes the map very large and difficult to see. The leaflet pacakge makes a nice interactive map (try zooming and clicking on locations!).
 ```{r Plot Locations}
 # just plot all station locations
-cont_us=subset(USAirportWeatherStations,State!="AK" & State!="MP" & State!="PR" & State!="HI" & State!="VI" & State!="GU")
+cont_us <- USAirportWeatherStations %>%
+        filter(State!="AK" & State!="MP" & State!="PR" & State!="HI" & State!="VI" & State!="GU")
 
 m <- leaflet() %>%
         setMaxBounds(-125,23,-67,50)%>%
@@ -128,7 +129,7 @@ tryapply(st_list, combine_years_wea)
 
 Ok, we now have a single file for each station with all the data. I loop through and fit a linear trend vs time for each one, and store all the results in a dataframe. I'll save the trend (coefficent) from the fit, and the p-values to evaluate how reliable the fit was.
 ```{r Fits, eval=FALSE}
-
+library(broom)
 # save data frame with fit coeffs, p value etc.
 temp_fits<-data.frame()
 for (i in seq_along(st_list)) {
@@ -138,8 +139,9 @@ for (i in seq_along(st_list)) {
                 dat<- read.csv(fname)
                 dat$dd <- ymd(dat$dd)
                 fit1 <- lm(Mean.TemperatureF~dd,data=dat)
-                summary(fit1)
-                temp_fits<-rbind(temp_fits,data.frame(airportCode=st_list[i],trend=fit1$coefficients[2],pval=summary(fit1)$coefficients[2,4]))
+                fit_tidy <- tidy(fit1)
+#                summary(fit1)
+                temp_fits<-rbind(temp_fits,data_frame(airportCode=st_list[i],trend=fit_tidy$estimate[2],pval=fit_tidy$p.value[2]))
         }else{
                 print(paste("combined file for station ", st_list[i], " doesn't exist, skipping"))
         }
@@ -212,16 +214,22 @@ Ok this looks better. Note I haven't removed any of the obvious seasonal cycle. 
 
 Ok, now it's time to make the awesome map i've been envisioning. First i'll join the fit results with the station info so we have the locations and data together.
 ```{r}
+
+# Only keep stations with significant p-values
+temp_fits_good <- temp_fits %>%
+        filter(pval<0.05)
 # Join to data frame with station info
-results2 <- join(temp_fits[ig,],USAirportWeatherStations,by="airportCode")
+results2 <- inner_join(temp_fits_good,USAirportWeatherStations,by="airportCode")
 
 # Keep only continental and lower 48 states (map doesn't look good with others)
-results2<-subset(results2,State!="AK" & State!="MP" & State!="PR" & State!="HI" )
+results2<- results2 %>%
+        filter(State!="AK" & State!="MP" & State!="PR" & State!="HI" ) %>%
+        arrange(desc(trend))
 
 # Take a look at the largest, smallest trends
-sortdat<-arrange(results2,desc(trend))
-head(sortdat)
-tail(sortdat)
+#sortdat<-arrange(results2,desc(trend))
+head(results2)
+tail(results2)
 ```
 
 Now I can plot the map, with the size and color of circles proportional to the trends. Red colors indicate positive (warming) trends, and blue colors indicate negative (cooling) trends.
@@ -231,11 +239,14 @@ Now I can plot the map, with the size and color of circles proportional to the t
 usa <- map_data("usa")
 states <- map_data("state")
 
-g<-ggplot() + geom_polygon(data = usa, aes(x=long, y = lat, group = group), fill=NA, color="red") + coord_fixed(1.3) 
-
-g2<-g+geom_polygon(data=states,aes(x = long, y = lat, group = group), fill="slategray",color = "white") + guides(fill=FALSE)  # do this to leave off the color legend
-
-g2 + geom_point(data = results2, aes(x = Lon, y = Lat,size = abs(trend),color=trend)) + scale_color_gradient2(midpoint=0, low="blue", mid="white",high="red", space ="Lab" ,limits=c(-3.5,3.5)) +ggtitle("Linear trend [deg/decade] in mean temp., 1980-2016") + labs(x="Longitude",y="Latitude")
+ggplot() +
+        geom_polygon(data = usa, aes(x=long, y = lat, group = group), fill=NA, color="red") + coord_fixed(1.3)  +
+        geom_polygon(data=states,aes(x = long, y = lat, group = group), fill="slategray",color = "white") +
+        guides(fill=FALSE) +  # leave off the color legend
+        geom_point(data = results2, aes(x = Lon, y = Lat,size = abs(trend),color=trend)) + 
+        scale_color_gradient2(midpoint=0, low="blue", mid="white",high="red", space ="Lab" ,limits=c(-3.5,3.5)) +
+        ggtitle("Linear trend [deg/decade] in mean temp., 1980-2016") +
+        labs(x="Longitude",y="Latitude")
 
 # now try making same map w/ leaflet
 library(leaflet)
@@ -244,6 +255,7 @@ library(leaflet)
 pal_blrd <- brewer.pal(10,"RdBu")
 pal <- colorNumeric(palette=rev(pal_blrd),domain=c(-3.5,3.5))
 
+# Also make an interactive leaflet map
 m <- leaflet(data=results2) %>%
         setMaxBounds(-125,23,-67,50)%>%
         addTiles() %>%  # Add default OpenStreetMap map tiles
