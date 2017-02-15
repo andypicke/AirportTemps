@@ -3,7 +3,8 @@ title: "Analysis of Linear Trends in USA Aiport Temperatures"
 author: "Andy Pickering"
 date: "10/12/2016"
 output: 
-html_document: 
+  html_document: 
+    keep_md: yes
 keep_md: yes
 ---
 
