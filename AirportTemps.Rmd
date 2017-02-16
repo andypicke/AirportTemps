@@ -85,7 +85,6 @@ tryapply(st_list, get_all_years)
 
 ```
 
-
 Ok, we finally have all the yearly data files downloaded. Now i'll combine the yearly files (1980-2015) for each station into a single combined file. I also do some cleaning and remove bad temperature values.
 
 ```{r Combine Years, eval=FALSE}
@@ -281,7 +280,7 @@ The map suggests the following conclusions, though more detailed analysis is nee
 - Qualitatively from the map, it looks like the south/south east is warming at almost all stations.
 
 ### Future questions
-- Is the trend related to latitude?
-- Are the fits sensitive to the exact time-range used?
-- What does Alasksa look like?
+- Are the trends related to latitude or elevation?
+- How sensitive are the fits to the exact time-range used?
+- What does Alaska look like?
 
