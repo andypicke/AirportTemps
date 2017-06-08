@@ -5,22 +5,26 @@ date: "10/12/2016"
 output:
   html_document:
     keep_md: yes
+    toc: true
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+## Introduction
 I love looking at weather data and have experimented in the past with some of the airport weather station data available from <http://www.wunderground.com>. I saw this little analysis on R-bloggers 
 <https://www.r-bloggers.com/annual-mean-temperature-trends-12-airports/>
-and thought it would be interesting to look at trends from stations across the US and visualize the results on a map.
+and thought it would be interesting to look at trends from stations across the US and visualize the results on a map. The goal is to look at long-term temperature records at each station and fit a linear model to see if there is a positive or negative trend. We know that global temperatures have been increasing steadily, but that doesn't necessarily mean that temperatures at specific locations will be going up. So I think it will be interesting to see what kind of spatial variability there is in the temperature trends.
 
+## Set up - Load the packages i'll be using in this analysis
 ```{r Setup}
 # Setup, load packages
 rm(list=ls())
 library(weatherData)
 suppressPackageStartupMessages(library(lubridate))
 library(ggplot2)
+library(plyr)
 suppressPackageStartupMessages(library(dplyr))
 suppressPackageStartupMessages(library(maps))
 library(RColorBrewer)
@@ -28,22 +32,33 @@ library(magrittr)
 library(leaflet)
 ```
 
-First we need a list of the weather stations we will use. Luckily the weatherData package already contains a compiled data frame 'USAirportWeatherStations' with all the stations and info about them. The 'airportCode' field is what will identify the station when we request the data through the wunderground API.
+
+
+## Getting the weather data
+First we need a list of the weather stations we will use. Luckily the 'weatherData' package already contains a compiled data frame 'USAirportWeatherStations' with all the stations and info about them (I tried compiling this table before I realized it was in the weatherData package, and it was proving suprisingly difficult). The 'airportCode' field is what will identify the station when we request the data through the wunderground API.
+
 ```{r}
 head(USAirportWeatherStations)
 ```
 
-I want to fit a long-term trend, so i'll get data starting in 1980 (a lot of the stations seem to go back this far).
-```{r}
-# Years we will get data for
-year_list=1980:2016
-st_list <-USAirportWeatherStations$airportCode
-# station KMMO 1993 doesn't work, skip
-st_list <- st_list[-which(st_list=="KMMO")]
+
+Let's first plot all the station locations to see where they are. The leaflet pacakge makes a nice interactive map (try zooming and clicking on locations!):
+```{r Plot Locations}
+# just plot all station locations
+
+m <- leaflet() %>%
+        setMaxBounds(-125,23,-67,50)%>%
+        addTiles() %>%  # Add default OpenStreetMap map tiles
+        addCircleMarkers(lng=USAirportWeatherStations$Lon, lat=USAirportWeatherStations$Lat, popup=USAirportWeatherStations$Station,radius=2,fill=TRUE,color="grey")
+m  # Print the map
+
 ```
 
-Let's first plot all the station locations. For this analysis, I'll just use those in the continental/lower 48 US states. Including others like Alaska, Hawaii, Virgin Islands etc. makes the map very large and difficult to see. The leaflet pacakge makes a nice interactive map (try zooming and clicking on locations!).
-```{r Plot Locations}
+
+
+The map is quite zoomed out because there are a few stations outside the continental US (Hawaii, Guam, US Virgin Islands etc.). For the rest of this analysis, I'll just use those in the continental/lower 48 US states. 
+
+```{r Plot Locations Cont. US}
 # just plot all station locations
 cont_us <- USAirportWeatherStations %>%
         filter(State!="AK" & State!="MP" & State!="PR" & State!="HI" & State!="VI" & State!="GU")
@@ -51,80 +66,362 @@ cont_us <- USAirportWeatherStations %>%
 m <- leaflet() %>%
         setMaxBounds(-125,23,-67,50)%>%
         addTiles() %>%  # Add default OpenStreetMap map tiles
-        addCircleMarkers(lng=cont_us$Lon,lat=cont_us$Lat,popup=cont_us$Station,radius=2,fill=TRUE,color="grey")
+        addCircleMarkers(lng=cont_us$Lon,lat=cont_us$Lat,popup=paste(cont_us$Station,cont_us$State),radius=2,fill=TRUE,color="grey")
 m  # Print the map
 
 ```
 
-The next bit of code downloads the data from <http://www.wunderground.com>. This is the most time-consuming part of the analysis. It appears that the wunderground API only lets you download a year of data at a time. With my laptop and wifi speed, I estimate it takes about 2-3 sec to download each 1 year data file. For 36 years of data (1980-2016) at about 1600 stations, that works out to about 48 hours! Luckily it is easy to write a loop to do this, and I just let it run overnight or in the background until it was done.
+### Downloading the data
+The next bit of code downloads the data from <http://www.wunderground.com>. This is the most time-consuming part of the analysis. It appears that the wunderground API only lets you download a year of data at a time. With my laptop and wifi speed, I estimate it takes about 2-3 sec to download each 1 year data file. For 36 years of data (1980-2016) at about 1600 stations, that works out to about 48 hours! Luckily it is easy to write a loop to do this, and I just let it run overnight or in the background until it was done. I save a csv file for each year/station.
+
 ```{r Download Data, eval=FALSE}
 # Define function to download daily weather for 1 year.
 # I had trouble getting the functions in the weatherData package to work, but once we have the formula for the API it is easy to grab the data.
 
-get_yearly_weather <- function (year,st_code){
+# function returns the url for weather for 1 year, 1 station
+get_yearly_weather_url <- function (year,st_code){
         url <- paste0("http://www.wunderground.com/history/airport/",st_code,"/",year,"/1/1/CustomHistory.html?dayend=31&monthend=12&yearend=",year,"&req_city=NA&req_state=NA&req_statename=NA&format=1")
 }
 
+# download weather data for 1 year, 1 station
+download_wea_year <- function(year, st_code){
+        savefile<-file.path("Data",paste0("wea",st_code,year,".csv"))
+        url=get_yearly_weather_url(year,st_code)
+        print(paste("Getting weather data for ",st_code," for year ",year))
+        download.file(url,destfile=savefile)
+}
+
 # Define a function to download the weather data for a given station code for each year
-get_all_years <- function(st_code){
+get_all_years <- function(st_code,year_list){
         for (i in seq_along(year_list)) {
                 year <- year_list[i]
-                savefile<-file.path("~/AirportTemps/Data",paste0("wea",st_code,year,".csv"))
+                savefile<-file.path("Data",paste0("wea",st_code,year,".csv"))
                 if (file.exists(savefile)){
                         print(paste(savefile," already downloaded"))
                 }else{
-                        url=get_yearly_weather(year,st_code)
-                        print(paste("Getting weather data for ",st_code," for year ",year))
-                        download.file(url,savefile)
+                        safely(download_wea_year(year,st_code))
                 }
         }
 }
 
-# Apply that function to station list to get data for all stations
-tryapply(st_list, get_all_years)
+```
+
+
+Let's look at what one of these files looks like:
+```{r}
+
+
+load_yearly_wea <- function(year,st_code){
+        savefile <-file.path( "Data",paste0("wea",st_code,year,".csv"))
+        dat <- read.csv(savefile)
+        dat <- dat %>%
+                dplyr::rename(max_temp=Max.TemperatureF) %>%
+                dplyr::rename(min_temp=Min.TemperatureF) %>%
+                dplyr::rename(mean_temp=Mean.TemperatureF) %>%
+                mutate(date=ymd(dat[,1])) %>%
+                select(date,max_temp,min_temp,mean_temp) %>%
+                mutate(year=year(date),yday=yday(date)) %>%
+                mutate(st_code=st_code)
+        }
+
+        year<-2007
+        st_code<-"KDEN"
+        dat <- load_yearly_wea(year,st_code)
+        
+        ggplot(dat,aes(date,max_temp)) +
+                geom_line()+
+                geom_point()+
+                ggtitle(paste("Max. Daily Temp. at",st_code,"for",year))
 
 ```
 
+Then we can apply this function to the full list of stations: I want to fit a long-term trend, so i'll get data starting in 1980 (a lot of the stations seem to go back this far).
+```{r}
+# Years we will get data for
+year_list <- 1980:2015
+st_list <- cont_us$airportCode
+
+# station KMMO hangs up for years after 1993, for unknown reasons?
+
+# Apply that function to station list to get data for all stations
+plyr::tryapply(st_list, get_all_years, year_list=year_list)
+
+```
+
+
 Ok, we finally have all the yearly data files downloaded. Now i'll combine the yearly files (1980-2015) for each station into a single combined file. I also do some cleaning and remove bad temperature values.
+
 
 ```{r Combine Years, eval=FALSE}
 # Remove bad temperature values (marked as -99999 in data)
 rm_bad_wea_values <- function(dat){
-        dat$Min.TemperatureF[which(dat$Min.TemperatureF==-99999)]<-NA
-        dat$Max.TemperatureF[which(dat$Max.TemperatureF==-99999)]<-NA
-        dat$Mean.TemperatureF[which(dat$Mean.TemperatureF==-99999)]<-NA
-        dat<-subset(dat,Mean.TemperatureF>-50);
-        dat<-subset(dat,Mean.TemperatureF<150);
+        dat$min_temp[which(dat$min_temp==-99999)] <- NA
+        dat$max_temp[which(dat$max_temp==-99999)] <- NA
+        dat$mean_temp[which(dat$mean_temp==-99999)] <- NA
         dat
 }
 
+# **also save list of stations for which there was good data and we produced a combined file?
+
 # Define a function to load and combine all years for a station into one dataframe
 combine_years_wea <- function(st_code){
-        savefile <-file.path( "~/AirportTemps/Data",paste0("wea",st_code,"combined.csv"))
+        savefile <-file.path( "Data","combined",paste0("wea",st_code,"combined.csv"))
         print(paste("combining years for station ", st_code))
         # Load csv files for each year and combine into a single data frame
         year_list=1980:2015
         dat_all=data.frame()
         for (i in seq_along(year_list)) {
                 year <- year_list[i]
-                #print(year)
-                dat <- read.csv( file.path( "~/AirportTemps/Data",paste0("wea",st_code,year,".csv")))
-                dat<-rm_bad_wea_values(dat)
-                dat$dd <- ymd(dat[,1])
-                dat_all=rbind(dat_all,dat)
+                dat <- load_yearly_wea(year,st_code)
+                dat <- rm_bad_wea_values(dat)
+                dat_all <- rbind(dat_all,dat)
         }
         # Check to make sure we have data (some files are empty)
-        if (nrow(dat_all)>(20*365)){
+        if (nrow(dat_all)>=(length(year_list)*300)){
                 # Save csv with combined data...
                 write.csv(dat_all,savefile)
         }else{
                 print(paste("station ",st_code," doesn't have data"))
         }
 }
-
-# some stations don't work, so need tryapply()
-tryapply(st_list, combine_years_wea)
 ```
+
+
+Apply to all stations
+```{r}
+# some stations don't work, so need tryapply()
+plyr::tryapply(st_list, combine_years_wea)
+```
+
+## Fitting our models
+
+I'm going to use a strategy for fitting many models to different datasets that I recently learned in a DataCamp course by David Robison. First i'll 'nest' the data for each station. Each station will be a row, and in each row we'll have a column of nested data frames containing the data for that station.
+```{r}
+
+# load combined data for a station
+load_combined_wea <- function(st_code){
+        fname<-file.path( "Data",paste0("wea",st_code,"combined.csv"))
+        dat <- read.csv(fname)
+        dat <- dat %>%
+                mutate(date=ymd(date)) %>%
+                mutate(st_code=as.character(st_code))
+        
+        # check for errors in data. ex.: KFAT, some max_temps are 0, < min_temps...
+        ib <- which(dat$max_temp < dat$min_temp)
+        if (length(ib)>0){
+                dat[ib,1:7]<-NA
+        }
+        
+        ib <- which(dat$mean_temp< (-50) )
+        if (length(ib)>0){
+                dat$mean_temp[ib]<-NA
+        }
+        
+        dat
+}
+```
+
+
+Test out fitting on a single station:
+```{r}
+st_code <- "KDEN"
+dat <- load_combined_wea(st_code)
+# fit a linear model
+fit <- lm(mean_temp~date,dat)
+library(broom)
+# get coeffiecients
+fit_tidy <- tidy(fit)
+fit_tidy
+# get r-squared etc
+fit_glance <- glance(fit)
+fit_glance
+
+# save data frame with results
+df <- data_frame(st_code,slope=fit_tidy$term[2],rsq=fit_glance$r.squared,pvalue=fit_glance$p.value)
+df
+
+ggplot(dat,aes(date,mean_temp))+
+        geom_line()+
+        geom_smooth(method="lm")
+
+```
+
+
+Now loop through and do fit for all stations:
+```{r}
+df_all <- data_frame()
+st_list<-cont_us$airportCode
+library(broom)
+
+for (i in seq_along(st_list)){
+        print(paste("working on number",i,"out of",length(st_list)))
+        fname<-file.path( "Data",paste0("wea",st_list[i],"combined.csv"))
+        if (file.exists(fname)){
+                
+                dat <- load_combined_wea(st_list[i])
+                
+                # make sure we have good data
+                N_na_date <- length(which(is.na(dat$date)))
+                N_na_temp <- length(which(is.na(dat$mean_temp)))
+                if (N_na_date < 0.1*26*365 & N_na_temp < 0.1*26*365){
+                        
+                        # fit a linear model
+                        fit <- lm(mean_temp~date,dat)
+                        
+                        # get coeffiecients
+                        fit_tidy <- tidy(fit)
+                        #fit_tidy
+                        # get r-squared etc
+                        fit_glance <- glance(fit)
+                        #fit_glance
+                        
+                        # save data frame with results
+                        df <- data_frame(st_code=st_list[i],slope=fit_tidy$estimate[2],rsq=fit_glance$r.squared,pvalue=fit_glance$p.value)
+                        
+                        df_all <- bind_rows(df_all,df)
+                }
+        }
+}
+df_all
+```
+
+
+```{r}
+
+df_all <- df_all %>%
+        mutate(slope_decade=slope*365*10)
+
+df_all %>%
+        ggplot(aes(x=1,y=pvalue))+
+        geom_boxplot()
+
+# R^2 isn't very useful for this analysis since we didn't fit the seasonal cycle
+df_all %>%
+        ggplot(aes(x=1,y=rsq))+
+        geom_boxplot()
+
+df_all %>%
+        ggplot(aes(x=1,y=slope))+
+        geom_boxplot()
+
+# find bad fits w/ pvalue >0.05
+bad_fits <- df_all %>%
+        filter(pvalue>0.05)
+
+# look at some of these fits to see why they are bad
+st_code<-bad_fits$st_code[10]
+dat <- load_combined_wea(st_code)
+ggplot(dat,aes(date,mean_temp))+
+        geom_line()+
+        geom_smooth(method="lm")
+
+
+# find good fits w/ pvalue <0.05
+good_fits <- df_all %>%
+        filter(pvalue<0.05)
+
+df_all %>%
+        mutate(slope_decade=slope*365*10) %>%
+        filter(abs(slope_decade)>1) %>%
+        arrange(desc(abs(slope_decade))) 
+
+
+
+# look at some of these fits 
+st_code<-good_fits$st_code[500]
+st_code <- "KCKL"
+dat <- load_combined_wea(st_code)
+ggplot(dat,aes(date,mean_temp))+
+        geom_point()+
+        geom_smooth(method="lm")
+good_fits$slope[300]*365*10
+
+```
+
+Plot histogram of deg/decade trends
+```{r}
+good_fits %>%
+        mutate(slope_decade=slope*365*10) %>%
+        ggplot(aes(x=slope_decade)) +
+        geom_histogram(aes(fill=slope_decade>0))
+```
+
+
+```{r}
+# combine all stations into one big data frame
+# doing all stations is too much for my laptop to handle, try one state
+
+st_list <- 
+all_stations <- data_frame()
+for (i in seq_along(st_list)){
+        if (exists("dat")){
+                rm(dat)
+        }
+        fname<-file.path( "Data",paste0("wea",st_list[i],"combined.csv"))
+        if (file.exists(fname)){
+                dat <- load_combined_wea(st_list[i])
+                if (exists("dat")){
+                        all_stations <- bind_rows(all_stations,dat)
+                }
+        }
+}
+#dat <- load_combined_wea("KFAT")
+#dat2 <- load_combined_wea("KDEN")
+#all_stations<-bind_rows(dat,dat2)
+
+library(tidyr)
+all_stations_nested <- all_stations %>%
+        nest(-st_code) %>%
+        left_join(USAirportWeatherStations,by=c("st_code"="airportCode"))
+
+# save the nested data frame since it takes a while to build
+saveRDS(all_stations_nested,file = "Data/all_stations_nested")
+ 
+ggplot(all_stations,aes(date,max_temp))+
+        geom_line(aes(col=st_code))
+
+```
+
+
+Load the nested data frame we built if starting from here:
+```{r}
+all_stations_nested <-readRDS(file = "Data/all_stations_nested")
+```
+
+
+
+```{r}
+
+# the broom package will let us easily extract model coefficients and metrics
+library(broom)
+
+# 1st define a little function to do linear fit of mean_temp vs date
+myfit <- function(df){
+        fit <- lm(mean_temp~date,data=df)
+}
+
+# test myfit on a single stations
+fit <- myfit(all_stations_nested$data[[200]])
+fit_tidy <- tidy(fit)
+        
+df <- all_stations_nested$data[[700]]
+ggplot(filter(df,mean_temp>-50),aes(date,mean_temp))+
+        geom_line()+
+        geom_smooth(method="lm")
+
+
+# now map myfit to all stations in the nested data frame and store results as nested models
+all_stations_nested <- all_stations_nested %>%
+        mutate(model = map(data,myfit))
+
+# then map broom to all fits
+
+# plot R^2 for all and see which fits might be bad
+
+# filter by p-value
+
+```
+
 
 Ok, we now have a single file for each station with all the data. I loop through and fit a linear trend vs time for each one, and store all the results in a dataframe. I'll save the trend (coefficent) from the fit, and the p-values to evaluate how reliable the fit was.
 ```{r Fits, eval=FALSE}
@@ -217,19 +514,21 @@ g
 
 Ok this looks better. Note I haven't removed any of the obvious seasonal cycle. My reasoning is that i'm interested in the long-term trend, and if there is a constant seasonal cycle it should average itself out (ie if the only variability in temperature was a seasonal cycle, the fit should give a trend of zero). In the future I plan to try fits over different time periods, and also with the seasonal cycle removed, to see how that affects the results.
 
+## Making the map
+
 Ok, now it's time to make the awesome map i've been envisioning. First i'll join the fit results with the station info so we have the locations and data together.
 ```{r}
 
 # Only keep stations with significant p-values
-temp_fits_good <- temp_fits %>%
-        filter(pval<0.05)
+#temp_fits_good <- temp_fits %>%
+#        filter(pval<0.05)
 # Join to data frame with station info
-results2 <- inner_join(temp_fits_good,USAirportWeatherStations,by="airportCode")
+results2 <- inner_join(good_fits,USAirportWeatherStations,by=c("st_code"="airportCode"))
 
 # Keep only continental and lower 48 states (map doesn't look good with others)
 results2<- results2 %>%
         filter(State!="AK" & State!="MP" & State!="PR" & State!="HI" ) %>%
-        arrange(desc(trend))
+        arrange(desc(slope))
 
 # Take a look at the largest, smallest trends
 #sortdat<-arrange(results2,desc(trend))
@@ -248,7 +547,7 @@ ggplot() +
         geom_polygon(data = usa, aes(x=long, y = lat, group = group), fill=NA, color="red") + coord_fixed(1.3)  +
         geom_polygon(data=states,aes(x = long, y = lat, group = group), fill="slategray",color = "white") +
         guides(fill=FALSE) +  # leave off the color legend
-        geom_point(data = results2, aes(x = Lon, y = Lat,size = abs(trend),color=trend)) + 
+        geom_point(data = results2, aes(x = Lon, y = Lat,size = abs(slope_decade),color=slope_decade)) + 
         scale_color_gradient2(midpoint=0, low="blue", mid="white",high="red", space ="Lab" ,limits=c(-3.5,3.5)) +
         ggtitle("Linear trend [deg/decade] in mean temp., 1980-2016") +
         labs(x="Longitude",y="Latitude")
@@ -256,8 +555,7 @@ ggplot() +
 ```
 
 ```{r}
-# Make the same map w/ leaflet
-library(leaflet)
+# Make an interactive version of the same map w/ leaflet
 
 # make color palette. I want to use the diverging red-blue palette, but need to reverse it so blue is negative, red is positive
 pal_blrd <- brewer.pal(10,"RdBu")
@@ -267,20 +565,37 @@ pal <- colorNumeric(palette=rev(pal_blrd),domain=c(-3.5,3.5))
 m <- leaflet(data=results2) %>%
         setMaxBounds(-125,23,-67,50)%>%
         addTiles() %>%  # Add default OpenStreetMap map tiles
-        addCircleMarkers(~Lon,~Lat,popup=paste(results2$Station,round(results2$trend,digits=2)),radius=~(4*trend),fill=TRUE,color=~pal(trend),fillColor=~pal(trend),fillOpacity = 2,opacity=2,weight=3)
+        addCircleMarkers(~Lon,~Lat,popup=paste(results2$Station,round(results2$slope_decade,digits=2)),radius=~(7*slope_decade),fill=TRUE,color=~pal(slope_decade),fillColor=~pal(slope_decade),fillOpacity = 2,opacity=2,weight=3)
 m  # Print the map
 
 ```
 
-### Conclusions
+## Conclusions
 The map suggests the following conclusions, though more detailed analysis is needed to confirm them.
 
 - The majority of the stations show a warming trend
-- Some stations show a cooling trend. 
-- Qualitatively from the map, it looks like the south/south east is warming at almost all stations.
+- Some stations show a cooling trend. The magnitude of the cooling trends seems to be larger on average than the magnitude of the warming trends?
+
 
 ### Future questions
-- Are the trends related to latitude or elevation?
+- Are the trends related to latitude or elevation? Don't seem to be...
+
+```{r}
+ggplot(results2,aes(Lat,slope_decade))+
+        geom_point()
+```
+
+
+```{r}
+ggplot(results2,aes(Elevation,slope_decade))+
+        geom_point()+
+        geom_smooth()
+```
+
 - How sensitive are the fits to the exact time-range used?
 - What does Alaska look like?
 
+## Session Info
+```{r}
+sessionInfo()
+```
