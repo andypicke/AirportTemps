@@ -1,0 +1,183 @@
+---
+title: "Analysing US Airport Temperature Trends"
+output: 
+  html_notebook: 
+    number_sections: no
+    toc: yes
+---
+
+
+# Introduction
+
+This is an analysis looking at long-term trends in temperature recorded at US airport stations. I orginally did this about a year ago, but am re-visiting it in more detail and with improved R and data science skills.
+
+
+
+
+# Data
+
+- In original analysis, I had downloaded all the files to my computer and was loading/combining them from there.
+- I have now downloaded and cleaned all the data, and put into a sqlite database that I will query from instead of reading in the csv files. 
+- See <https://github.com/andypicke/wunderground_data>
+
+
+
+
+
+
+
+# Methods
+
+- My plan is to fit a linear regression to long-term temperature records at each airport station.
+- I will try doing this a variety of ways: Using all (daily) data, and using monthly/yearly averaged data.
+- I will display the results (the slope of the linear regression) on a leaflet map, with the size and color of points mapped to the magnitude of the trend.
+
+
+
+## Figure out how to query the data for 1 station from the database
+- <http://www.datacarpentry.org/R-ecology-lesson/05-r-and-databases.html>
+- Note The src_sqlite() command does not load the data into the R session ; use *collect* 
+```{r}
+
+library(ggplot2)
+suppressPackageStartupMessages( library(dplyr) )
+
+# open connection to sql database
+db_path <- '/Users/Andy/Projects/wunderground_data/wunderground_daily.db'
+wea_db <- src_sqlite(db_path)
+wea_db
+```
+
+## Example Querying w/ SQL
+```{r}
+tbl(wea_db, sql("SELECT * FROM wea_clean WHERE mean_temp NOT NULL LIMIT 10"))
+```
+
+
+
+## Example querying w/ dplyr
+```{r}
+wea_df <- tbl(wea_db,'wea_clean') %>% 
+        filter(st_code=='KDEN' & between(year,2008,2010) & !is.na(yday)) %>% 
+        select(date,year,yday,mean_temp) %>% 
+        collect()
+        
+head(wea_df)
+```
+
+
+## Get all data for specified station and year range
+```{r}
+the_sta <- 'KBOS'
+year1 <- 1950
+year2 <- 2016
+
+wea_df <- tbl(wea_db,'wea_clean') %>% 
+        filter(st_code==the_sta & between(year,year1,year2) & !is.na(yday)) %>% 
+        select(date,st_code,year,yday,mean_temp) %>% 
+        collect()
+
+wea_df$date <- as.Date(wea_df$date)
+#head(wea_df)
+
+wea_df %>%  ggplot(aes(date,mean_temp)) +
+        geom_line() +
+        geom_smooth(method='lm')
+
+```
+
+
+## Compute yearly average temps
+```{r}
+
+the_sta <- 'KBOS'
+year1 <- 1950
+year2 <- 2016
+
+wea_yearly <- tbl(wea_db,'wea_clean') %>% 
+        filter(st_code==the_sta & between(year,year1,year2) & !is.na(yday)) %>% 
+        distinct() %>% 
+        select(date,st_code,year,yday,mean_temp) %>% 
+        group_by(year) %>% 
+        summarise(mt = mean(mean_temp)) %>% 
+        collect()
+
+
+wea_yearly %>%  ggplot(aes(year,mt)) +
+        geom_point() +
+        geom_smooth(method='lm') +
+        ggtitle(paste('Yearly average temperatures for ',the_sta)) +
+        ylab('Temperature (F)')
+
+```
+
+
+
+
+```{r}
+tbl(wea_db, sql("SELECT count(distinct(st_code)) as N_stations  FROM wea_clean"))
+```
+
+
+# Trends in yearly-avgerage temperatures
+- Compute yearly average temperatures
+- * Need to make sure we have good data for entire years?
+- fit linear regression and find trend (slope)
+
+
+## First, see how many years have complete or almost complete data
+```{r}
+the_sta <- 'KBOS'
+year1 <- 1950
+year2 <- 2016
+
+wea_yearly <- tbl(wea_db,'wea_clean') %>% 
+        filter(st_code==the_sta & between(year,year1,year2) & !is.na(yday)) %>% 
+        distinct() %>% 
+        select(date,st_code,year,yday,mean_temp) %>% 
+        group_by(year) %>% 
+        summarise(mt = mean(mean_temp), N=count()) %>% 
+        collect()
+#        filter(N>300) %>% 
+#        collect() 
+
+wea_yearly
+
+wea_yearly %>% ggplot(aes(year,N)) +
+        geom_point() +
+        ggtitle('Number of good daily data points each year')
+
+```
+
+
+
+
+```{r}
+
+the_sta <- 'KBOS'
+year1 <- 1950
+year2 <- 2016
+
+wea_yearly <- tbl(wea_db,'wea_clean') %>% 
+        filter(st_code==the_sta & between(year,year1,year2) & !is.na(yday)) %>% 
+        distinct() %>% 
+        select(date,st_code,year,yday,mean_temp) %>% 
+        group_by(year) %>% 
+        summarise(mt = mean(mean_temp), N=count()) %>% 
+        filter(N>300) %>% 
+        collect()
+
+wea_yearly %>%  ggplot(aes(year,mt)) +
+        geom_point() +
+        geom_smooth(method='lm') +
+        ggtitle(paste('Yearly average temperatures for ',the_sta)) +
+        ylab('Temperature (F)')
+
+mod <- lm(mt~year,data = wea_yearly)
+summary(mod)
+
+```
+
+
+
+
